@@ -26,26 +26,29 @@ __global__ void countingSort(int *d_input, int *d_output, int *d_countArray, int
     // atomicAdd will return us the value of the position before addition
     if (index < size) {
         int digit = (d_input[index] / power) % 10;
+        // increment respective postition in positionArray by 1 to setup position of next element
         int pos = atomicAdd(&d_positionArray[digit], 1);
         d_output[pos] = d_input[index];
     }
 }
 
-__global__ void findmax(int *d_input, int *d_max) {
+__global__ void findmax(int *g_idata, int *d_max) {
   extern __shared__ int sdata[];
 
   int index = blockIdx.x * blockDim.x + threadIdx.x;
 
-  sdata[threadIdx.x] = d_input[index];
+  sdata[threadIdx.x] = g_idata[index];
 
   __syncthreads();
-  for (int s = blockDim.x / 2; s >= 1; s = s / 2) {
-    if (threadIdx.x < s) {
+  for (int s = blockDim.x / 2; s >= 1; s = s - 2) {
+    if (threadIdx.x < s && sdata[threadIdx.x] < sdata[threadIdx.x + s]) {
         sdata[threadIdx.x] = sdata[threadIdx.x + s];
     }
     __syncthreads();
   }
+  
   if (threadIdx.x == 0) {
+    // the max integer is going to be either at index 0 or 1
     *d_max = sdata[0];
   }
 }
@@ -53,8 +56,8 @@ __global__ void findmax(int *d_input, int *d_max) {
 int main() {
     
     // host memory allocations
-    int size = 11;
-    int input[] = {170, 45, 75, 90, 802, 24, 2, 66, 235, 45, 23};
+    int input[] = {170, 45, 75, 90, 802, 24, 2, 66, 235, 45};
+    int size = sizeof(input) / sizeof(input[0]);
     int output[size];
     int *max;
     max = (int*)malloc(sizeof(int));
@@ -72,8 +75,9 @@ int main() {
     int blocksPerGrid = (size + threadsPerBlock) / threadsPerBlock;
 
     cudaMemcpy(d_input, input, size * sizeof(int), cudaMemcpyHostToDevice);
-    findmax<<<1, 10, size>>>(d_input, d_max);
+    findmax<<<blocksPerGrid, size, threadsPerBlock>>>(d_input, d_max);
     cudaMemcpy(max, d_max, sizeof(int), cudaMemcpyDeviceToHost);
+        cout << *max << "\n";
 
     int power = 1;
 

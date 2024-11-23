@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cuda_runtime.h>
+#include <time.h>
 using namespace std;
 
 __global__ void countingSort(int *d_input, int *d_output, int *d_countArray, int *d_positionArray, int power, int size) {
@@ -15,8 +16,8 @@ __global__ void countingSort(int *d_input, int *d_output, int *d_countArray, int
 
     __syncthreads();
 
-    // only need 10 threads to build the position array, for loop to emulate sequential only for this part since it's critical to be done in order
-    if (index == 1) {
+
+    if (index == 0 + blockIdx.x * blockDim.x) {
         for (int i = 1; i < 10; i++)
             d_positionArray[i] = d_countArray[i - 1] + d_positionArray[i - 1];
     }
@@ -30,17 +31,18 @@ __global__ void countingSort(int *d_input, int *d_output, int *d_countArray, int
         int pos = atomicAdd(&d_positionArray[digit], 1);
         d_output[pos] = d_input[index];
     }
+    
 }
 
 __global__ void findmax(int *g_idata, int *d_max) {
   extern __shared__ int sdata[];
 
-  int index = blockIdx.x * blockDim.x + threadIdx.x;
+  int index = threadIdx.x + blockIdx.x * blockDim.x;
 
   sdata[threadIdx.x] = g_idata[index];
 
   __syncthreads();
-  for (int s = blockDim.x / 2; s >= 1; s = s - 2) {
+  for (int s = blockDim.x / 2; s >= 1; s /= 2) {
     if (threadIdx.x < s && sdata[threadIdx.x] < sdata[threadIdx.x + s]) {
         sdata[threadIdx.x] = sdata[threadIdx.x + s];
     }
@@ -54,11 +56,14 @@ __global__ void findmax(int *g_idata, int *d_max) {
 }
 
 int main() {
-    
+    srand(time(0));
     // host memory allocations
-    int input[] = {170, 45, 75, 90, 802, 24, 2, 66, 235, 45};
-    int size = sizeof(input) / sizeof(input[0]);
-    int output[size];
+    int size = 60;
+    int *input = (int*)malloc(size * sizeof(int));
+    int *output = (int*)malloc(size * sizeof(int));
+    for(int i = 0; i < 60; i++) {
+        input[i] = rand() % 1000;
+    }
     int *max;
     max = (int*)malloc(sizeof(int));
 
@@ -71,25 +76,23 @@ int main() {
     cudaMalloc((void **) &d_max, sizeof(int));
 
     // configuration
-    int threadsPerBlock = 256;
-    int blocksPerGrid = (size + threadsPerBlock) / threadsPerBlock;
+    int threadsPerBlock = 1024;
+    int blocksPerGrid = (size + threadsPerBlock - 1) / threadsPerBlock;
 
     cudaMemcpy(d_input, input, size * sizeof(int), cudaMemcpyHostToDevice);
-    findmax<<<blocksPerGrid, size, threadsPerBlock>>>(d_input, d_max);
+    findmax<<<blocksPerGrid, threadsPerBlock, threadsPerBlock * sizeof(int)>>>(d_input, d_max);
+    cudaDeviceSynchronize();
     cudaMemcpy(max, d_max, sizeof(int), cudaMemcpyDeviceToHost);
-        cout << *max << "\n";
-
     int power = 1;
-
     while (*max / power > 0) {
         // reset arrays for next iteration
         cudaMemset(d_countArray, 0, 10 * sizeof(int));
         cudaMemset(d_positionArray, 0, 10 * sizeof(int));
 
         countingSort<<<blocksPerGrid, threadsPerBlock>>>(d_input, d_output, d_countArray, d_positionArray, power, size);
-
-        // copy previous values to next iteration to calculate new values, hence, from device memory to device memory
-        cudaMemcpy(d_input, d_output, size * sizeof(int), cudaMemcpyDeviceToDevice);
+        cudaDeviceSynchronize();
+        cudaMemcpy(output, d_output, size * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(d_input, output, size * sizeof(int), cudaMemcpyHostToDevice);
 
         // next least significant digit
         power *= 10;

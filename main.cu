@@ -3,9 +3,11 @@
 using namespace std;
 
 __global__ void countingSort(int *d_input, int *d_output, int *d_countArray, int *d_positionArray, int power, int size) {
+    // number of previous blocks + tidx in current block
     int index = threadIdx.x + blockIdx.x * blockDim.x;
 
     // increment count array based on current digit
+    // atomicAdd prevents race conditions
     if (index < size) {
         int digit = (d_input[index] / power) % 10;
         atomicAdd(&d_countArray[digit], 1);
@@ -14,12 +16,9 @@ __global__ void countingSort(int *d_input, int *d_output, int *d_countArray, int
     __syncthreads();
 
     // only need 10 threads to build the position array, for loop to emulate sequential only for this part since it's critical to be done in order
-    if (index < 10) {
-        for (int i = 1; i < 10; i++) {
-            if (index == i) {
-                d_positionArray[i] = d_countArray[i - 1] + d_positionArray[i - 1];
-            }
-        }
+    if (index == 1) {
+        for (int i = 1; i < 10; i++)
+            d_positionArray[i] = d_countArray[i - 1] + d_positionArray[i - 1];
     }
 
     __syncthreads();
@@ -54,8 +53,8 @@ __global__ void findmax(int *d_input, int *d_max) {
 int main() {
     
     // host memory allocations
-    int size = 10;
-    int input[] = {170, 45, 75, 90, 802, 24, 2, 66, 235, 45};
+    int size = 11;
+    int input[] = {170, 45, 75, 90, 802, 24, 2, 66, 235, 45, 23};
     int output[size];
     int *max;
     max = (int*)malloc(sizeof(int));
